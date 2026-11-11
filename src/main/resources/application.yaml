@@ -1,0 +1,15 @@
+spring:
+  application:
+    name: cargo-metrics-ai
+  threads:
+    virtual:
+      enabled: true
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 30MB
+
+yandex:
+  api:
+    token: ${YANDEX_API_TOKEN:your-yandex-api-token-here}
+    folder-id: ${YANDEX_FOLDER_ID:your-folder-id-here}
