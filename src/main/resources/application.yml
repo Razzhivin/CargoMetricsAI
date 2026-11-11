@@ -1,6 +1,8 @@
 spring:
   application:
     name: cargo-metrics-ai
+  config:
+    import: optional:file:.env[.properties]
   threads:
     virtual:
       enabled: true
@@ -11,5 +13,5 @@ spring:
 
 yandex:
   api:
-    token: ${YANDEX_API_TOKEN:your-yandex-api-token-here}
-    folder-id: ${YANDEX_FOLDER_ID:your-folder-id-here}
+    token: ${YANDEX_API_TOKEN}
+    folder-id: ${YANDEX_FOLDER_ID}
