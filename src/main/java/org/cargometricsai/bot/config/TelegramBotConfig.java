@@ -32,13 +32,25 @@ public class TelegramBotConfig {
             CargoMetricsTelegramBot bot,
             @Value("${telegram.bot.token}") String botToken
     ) {
-        return args -> {
-            try {
-                botsApplication.registerBot(botToken, bot);
-                log.info("=== TELEGRAM БОТ УСПЕШНО ЗАРЕГИСТРИРОВАН И СЛУШАЕТ ОБНОВЛЕНИЯ ===");
-            } catch (Exception e) {
-                log.error("=== ОШИБКА РЕГИСТРАЦИИ TELEGRAM БОТА ===", e);
+        return args -> Thread.startVirtualThread(() -> {
+            int maxRetries = 5;
+            for (int attempt = 1; attempt <= maxRetries; attempt++) {
+                try {
+                    botsApplication.registerBot(botToken, bot);
+                    log.info("=== TELEGRAM БОТ УСПЕШНО ЗАРЕГИСТРИРОВАН И СЛУШАЕТ ОБНОВЛЕНИЯ ===");
+                    return;
+                } catch (Exception e) {
+                    log.warn("Попытка {}/{} регистрации Telegram-бота не удалась: {}. Повтор через 15 сек...",
+                            attempt, maxRetries, e.getMessage());
+                    try {
+                        Thread.sleep(15_000);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
             }
-        };
+            log.error("=== НЕ УДАЛОСЬ ЗАРЕГИСТРИРОВАТЬ TELEGRAM БОТА ПОСЛЕ {} ПОПЫТОК ===", maxRetries);
+        });
     }
 }
