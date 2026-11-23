@@ -15,3 +15,10 @@ yandex:
   api:
     token: ${YANDEX_API_TOKEN}
     folder-id: ${YANDEX_FOLDER_ID}
+
+telegram:
+  bot:
+    token: ${TELEGRAM_BOT_TOKEN}
+    username: ${TELEGRAM_BOT_USERNAME}
+    admin-chat-id: ${TELEGRAM_ADMIN_CHAT_ID}
+    free-trial-limit: 3
