@@ -11,20 +11,19 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
-import org.telegram.telegrambots.bots.TelegramLongPollingBot;
+import org.telegram.telegrambots.client.okhttp.OkHttpTelegramClient;
+import org.telegram.telegrambots.longpolling.util.LongPollingSingleThreadUpdateConsumer;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.methods.updates.SetWebhook;
 import org.telegram.telegrambots.meta.api.objects.Update;
-import org.telegram.telegrambots.meta.api.objects.Message;
+import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.api.objects.Document;
 import org.telegram.telegrambots.meta.api.objects.PhotoSize;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardRow;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardButton;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
-import org.telegram.telegrambots.meta.TelegramBotsApi;
-import org.telegram.telegrambots.meta.generics.BotSession;
 
-import jakarta.annotation.PostConstruct;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -32,13 +31,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 @Component
 @ConditionalOnProperty(name = "telegram.bot.token")
-public class CargoMetricsTelegramBot extends TelegramLongPollingBot {
+public class CargoMetricsTelegramBot implements LongPollingSingleThreadUpdateConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(CargoMetricsTelegramBot.class);
 
@@ -48,9 +44,9 @@ public class CargoMetricsTelegramBot extends TelegramLongPollingBot {
     private final long adminChatId;
     private final String botToken;
     private final String botUsername;
+    private final OkHttpTelegramClient telegramClient;
 
     private final Map<String, CargoAnalysisResponse> lastResponses = new ConcurrentHashMap<>();
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
 
     public CargoMetricsTelegramBot(
             @Value("${telegram.bot.token}") String botToken,
@@ -59,38 +55,25 @@ public class CargoMetricsTelegramBot extends TelegramLongPollingBot {
             TrialRateLimiterService rateLimiter,
             TelegramNotificationFormatter formatter,
             @Value("${telegram.bot.admin-chat-id}") long adminChatId) {
-        super(new org.telegram.telegrambots.bots.DefaultBotOptions());
         this.botToken = botToken;
         this.botUsername = botUsername;
         this.cargoAnalysisService = cargoAnalysisService;
         this.rateLimiter = rateLimiter;
         this.formatter = formatter;
         this.adminChatId = adminChatId;
+        this.telegramClient = new OkHttpTelegramClient(botToken);
     }
 
-    @PostConstruct
-    public void registerBot() {
-        try {
-            TelegramBotsApi botsApi = new TelegramBotsApi(BotSession.class);
-            botsApi.registerBot(this);
-            log.info("Telegram bot registered: {}", botUsername);
-        } catch (TelegramApiException e) {
-            log.error("Failed to register Telegram bot: {}", e.getMessage());
-        }
+    public String getBotToken() {
+        return botToken;
     }
 
-    @Override
     public String getBotUsername() {
         return botUsername;
     }
 
     @Override
-    public String getBotToken() {
-        return botToken;
-    }
-
-    @Override
-    public void onUpdateReceived(Update update) {
+    public void consume(Update update) {
         log.info("Входящий Update из Telegram: updateId={}", update.getUpdateId());
 
         if (update.hasMessage()) {
@@ -259,7 +242,7 @@ public class CargoMetricsTelegramBot extends TelegramLongPollingBot {
         message.setReplyMarkup(keyboard);
 
         try {
-            execute(message);
+            telegramClient.execute(message);
         } catch (TelegramApiException e) {
             log.error("Failed to send message: {}", e.getMessage());
         }
@@ -272,7 +255,7 @@ public class CargoMetricsTelegramBot extends TelegramLongPollingBot {
                 .parseMode("HTML")
                 .build();
         try {
-            execute(message);
+            telegramClient.execute(message);
         } catch (TelegramApiException e) {
             log.error("Failed to send message: {}", e.getMessage());
         }
@@ -286,7 +269,7 @@ public class CargoMetricsTelegramBot extends TelegramLongPollingBot {
                     .text(message)
                     .parseMode("HTML")
                     .build();
-            execute(adminMessage);
+            telegramClient.execute(adminMessage);
         } catch (TelegramApiException e) {
             log.error("Failed to notify admin: {}", e.getMessage());
         }
