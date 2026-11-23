@@ -15,6 +15,7 @@ import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.Message;
+import org.telegram.telegrambots.meta.api.objects.Document;
 import org.telegram.telegrambots.meta.api.objects.PhotoSize;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardRow;
@@ -90,12 +91,19 @@ public class CargoMetricsTelegramBot extends TelegramLongPollingBot {
 
     @Override
     public void onUpdateReceived(Update update) {
+        log.info("Входящий Update из Telegram: updateId={}", update.getUpdateId());
+
         if (update.hasMessage()) {
             Message message = update.getMessage();
             if (message.hasText()) {
                 handleTextMessage(message);
             } else if (message.getPhoto() != null && !message.getPhoto().isEmpty()) {
                 handlePhotoMessage(message.getChatId(), message.getPhoto());
+            } else if (message.getDocument() != null && message.getDocument().getMimeType() != null
+                    && message.getDocument().getMimeType().startsWith("image/")) {
+                handleDocumentImage(message.getChatId(), message.getDocument());
+            } else {
+                sendMessage(message.getChatId(), "Пожалуйста, отправьте или перешлите 1–3 фотографии груза (сжатым фото или файлом), чтобы я рассчитал габариты и риски.");
             }
         }
     }
@@ -118,6 +126,52 @@ public class CargoMetricsTelegramBot extends TelegramLongPollingBot {
     private void handlePhotoMessage(Long chatId, List<PhotoSize> photos) {
         if (photos == null || photos.isEmpty()) return;
         processImages(chatId, photos);
+    }
+
+    private void handleDocumentImage(Long chatId, Document document) {
+        if (document == null || document.getFileId() == null) return;
+        log.info("Обработка изображения из Document: fileId={}", document.getFileId());
+        try {
+            byte[] imageBytes = downloadImage(document.getFileId());
+            List<org.springframework.web.multipart.MultipartFile> files = new ArrayList<>();
+            files.add(new InMemoryMultipartFile(
+                    imageBytes,
+                    "document_" + document.getFileUniqueId(),
+                    document.getFileName() != null ? document.getFileName() : "image.jpg",
+                    document.getMimeType()
+            ));
+
+            if (!rateLimiter.canProcess(chatId)) {
+                sendMessage(chatId, formatter.formatTrialLimitMessage());
+                return;
+            }
+
+            RequestMetadata metadata = new RequestMetadata(
+                    "TELEGRAM",
+                    "TELEGRAM",
+                    String.valueOf(chatId)
+            );
+
+            int usedCount = rateLimiter.incrementAndGet(chatId);
+            int remaining = rateLimiter.getRemaining(chatId);
+
+            CargoAnalysisResponse response = cargoAnalysisService.analyzeCargoImages(files, metadata);
+            lastResponses.put(response.requestId().toString(), response);
+
+            String message;
+            if (remaining == 0) {
+                message = formatter.formatLogisticCard(response, remaining) + "\n\n" + formatter.formatTrialLimitMessage();
+            } else {
+                message = formatter.formatLogisticCard(response, remaining);
+            }
+
+            sendMessageWithKeyboard(chatId, message);
+            notifyAdmin(chatId, response);
+
+        } catch (Exception e) {
+            log.error("Ошибка обработки Document для chatId {}: {}", chatId, e.getMessage(), e);
+            sendMessage(chatId, "❌ Ошибка обработки изображения: " + e.getMessage());
+        }
     }
 
     private void processImages(Long chatId, List<PhotoSize> photos) {
