@@ -13,6 +13,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.client.okhttp.OkHttpTelegramClient;
 import org.telegram.telegrambots.longpolling.util.LongPollingSingleThreadUpdateConsumer;
+import org.telegram.telegrambots.meta.api.methods.bot.GetFile;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 
 import org.telegram.telegrambots.meta.api.objects.Update;
@@ -25,6 +26,7 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.Keyboard
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import java.io.InputStream;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -346,17 +348,72 @@ public class CargoMetricsTelegramBot implements LongPollingSingleThreadUpdateCon
     }
 
     private InMemoryMultipartFile downloadImage(String fileId, int index) throws Exception {
-        org.telegram.telegrambots.meta.api.objects.File telegramFile = new org.telegram.telegrambots.meta.api.objects.File();
-        telegramFile.setFileId(fileId);
+        GetFile getFileRequest = GetFile.builder()
+                .fileId(fileId)
+                .build();
+        org.telegram.telegrambots.meta.api.objects.File telegramFile = telegramClient.execute(getFileRequest);
+        String filePath = telegramFile.getFilePath();
 
-        try (InputStream is = telegramClient.downloadFileAsStream(telegramFile)) {
+        String downloadUrl = "https://api.telegram.org/file/bot" + botToken + "/" + filePath;
+        log.info("Скачивание файла из Telegram: url={}", downloadUrl);
+
+        try (InputStream is = URI.create(downloadUrl).toURL().openStream()) {
             byte[] bytes = is.readAllBytes();
+            log.info("Скачан файл из Telegram: path={}, size={} bytes", filePath, bytes.length);
+
+            if (bytes == null || bytes.length < 100) {
+                throw new IllegalStateException(
+                        "Получен пустой или поврежденный файл из Telegram (size=" + (bytes == null ? 0 : bytes.length) + ")"
+                );
+            }
+
+            String mimeType = detectMimeType(bytes);
+
             return new InMemoryMultipartFile(
                     bytes,
                     "cargo_" + index + ".jpg",
                     "image.jpg",
-                    "image/jpeg"
+                    mimeType
             );
         }
+    }
+
+    private String detectMimeType(byte[] bytes) {
+        if (bytes.length < 2) {
+            throw new IllegalStateException("Недостаточно байт для определения MIME-типа");
+        }
+
+        if ((bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xD8) {
+            return "image/jpeg";
+        }
+
+        if ((bytes[0] & 0xFF) == 0x89 && (bytes[1] & 0xFF) == 0x50) {
+            return "image/png";
+        }
+
+        if (bytes.length >= 12 &&
+                (bytes[0] & 0xFF) == 0x52 &&
+                (bytes[1] & 0xFF) == 0x49 &&
+                (bytes[2] & 0xFF) == 0x46 &&
+                (bytes[3] & 0xFF) == 0x46 &&
+                (bytes[8] & 0xFF) == 0x57 &&
+                (bytes[9] & 0xFF) == 0x45 &&
+                (bytes[10] & 0xFF) == 0x42 &&
+                (bytes[11] & 0xFF) == 0x50) {
+            return "image/webp";
+        }
+
+        log.warn("Неизвестная сигнатура файла, первые 100 байт: {}", extractHexSignature(bytes));
+        throw new IllegalStateException("Неизвестный формат изображения из Telegram");
+    }
+
+    private String extractHexSignature(byte[] bytes) {
+        int limit = Math.min(bytes.length, 100);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < limit; i++) {
+            if (i > 0) sb.append(" ");
+            sb.append(String.format("%02X", bytes[i] & 0xFF));
+        }
+        return sb.toString();
     }
 }
