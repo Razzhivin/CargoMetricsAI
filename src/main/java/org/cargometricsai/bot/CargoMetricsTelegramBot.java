@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.client.okhttp.OkHttpTelegramClient;
 import org.telegram.telegrambots.longpolling.util.LongPollingSingleThreadUpdateConsumer;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
-import org.telegram.telegrambots.meta.api.methods.bot.GetFile;
+
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.api.objects.Document;
@@ -346,9 +346,8 @@ public class CargoMetricsTelegramBot implements LongPollingSingleThreadUpdateCon
     }
 
     private InMemoryMultipartFile downloadImage(String fileId, int index) throws Exception {
-        org.telegram.telegrambots.meta.api.objects.File telegramFile = org.telegram.telegrambots.meta.api.objects.File.builder()
-                .fileId(fileId)
-                .build();
+        org.telegram.telegrambots.meta.api.objects.File telegramFile = new org.telegram.telegrambots.meta.api.objects.File();
+        telegramFile.setFileId(fileId);
 
         try (InputStream is = telegramClient.downloadFileAsStream(telegramFile)) {
             byte[] bytes = is.readAllBytes();
