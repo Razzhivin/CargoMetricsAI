@@ -84,7 +84,7 @@ public class TelegramNotificationFormatter {
                 "Для настройки бота под ваш автопарк и запуска пилотного периода свяжитесь с руководителем проекта:\n\n" +
                 "👤 <b>Дмитрий Разживин</b>\n" +
                 "📞 Телефон / MAX: <code>+7 (904) 185-45-30</code>\n" +
-                "💬 Telegram: https://t.me";
+                "💬 Telegram: https://t.me/ds_razzhivin";
     }
 
     private String escapeHtml(String text) {
