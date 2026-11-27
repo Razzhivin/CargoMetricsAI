@@ -13,12 +13,11 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.client.okhttp.OkHttpTelegramClient;
 import org.telegram.telegrambots.longpolling.util.LongPollingSingleThreadUpdateConsumer;
-import org.telegram.telegrambots.meta.api.methods.bot.GetFile;
+import org.telegram.telegrambots.meta.api.methods.GetFile;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
-import org.telegram.telegrambots.meta.api.objects.Document;
 import org.telegram.telegrambots.meta.api.objects.PhotoSize;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardRow;
@@ -28,8 +27,10 @@ import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import java.io.InputStream;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -88,13 +89,13 @@ public class CargoMetricsTelegramBot implements LongPollingSingleThreadUpdateCon
                 handleTextMessage(message);
             } else if (message.getMediaGroupId() != null) {
                 handleMediaGroupAlbum(message.getChatId(), message.getMediaGroupId(), message);
-            } else if (message.getPhoto() != null && !message.getPhoto().isEmpty()) {
-                handlePhotoMessage(message.getChatId(), message.getPhoto());
-            } else if (message.getDocument() != null && message.getDocument().getMimeType() != null
-                    && message.getDocument().getMimeType().startsWith("image/")) {
-                handleDocumentImage(message.getChatId(), message.getDocument());
             } else {
-                sendMessage(message.getChatId(), "Пожалуйста, отправьте или перешлите 1–3 фотографии груза (сжатым фото или файлом), чтобы я рассчитал габариты и риски.");
+                Optional<String> bestFileId = extractBestPhotoFileId(message);
+                if (bestFileId.isPresent()) {
+                    processSingleImage(message.getChatId(), bestFileId.get());
+                } else {
+                    sendMessage(message.getChatId(), "Пожалуйста, отправьте или перешлите 1–3 фотографии груза (сжатым фото или файлом), чтобы я рассчитал габариты и риски.");
+                }
             }
         }
     }
@@ -114,20 +115,61 @@ public class CargoMetricsTelegramBot implements LongPollingSingleThreadUpdateCon
         }
     }
 
-    private void handleMediaGroupAlbum(Long chatId, String mediaGroupId, Message message) {
-        List<PhotoSize> photos = null;
-        if (message.getPhoto() != null) {
-            photos = message.getPhoto();
+    private Optional<String> extractBestPhotoFileId(Message message) {
+        if (message.hasPhoto() && !message.getPhoto().isEmpty()) {
+            return message.getPhoto().stream()
+                    .max(Comparator.comparingInt(p -> p.getFileSize() != null ? p.getFileSize() : p.getWidth()))
+                    .map(PhotoSize::getFileId);
+        }
+        if (message.hasDocument() && message.getDocument().getMimeType() != null
+                && message.getDocument().getMimeType().startsWith("image/")) {
+            return Optional.of(message.getDocument().getFileId());
+        }
+        return Optional.empty();
+    }
+
+    private void processSingleImage(Long chatId, String fileId) {
+        if (!rateLimiter.canProcess(chatId)) {
+            sendMessage(chatId, formatter.formatTrialLimitMessage());
+            return;
         }
 
-        if (photos == null || photos.isEmpty()) return;
+        try {
+            InMemoryMultipartFile file = downloadImage(fileId, 0);
 
-        PhotoSize largest = photos.stream()
-                .max((a, b) -> Integer.compare(a.getWidth() * a.getHeight(), b.getWidth() * b.getHeight()))
-                .orElse(null);
-        if (largest == null) return;
+            RequestMetadata metadata = new RequestMetadata(
+                    "TELEGRAM",
+                    "TELEGRAM",
+                    String.valueOf(chatId)
+            );
 
-        String fileId = largest.getFileId();
+            int usedCount = rateLimiter.incrementAndGet(chatId);
+            int remaining = rateLimiter.getRemaining(chatId);
+
+            CargoAnalysisResponse response = cargoAnalysisService.analyzeCargoImages(List.of(file), metadata);
+            lastResponses.put(response.requestId().toString(), response);
+
+            String message;
+            if (remaining == 0) {
+                message = formatter.formatLogisticCard(response, remaining) + "\n\n" + formatter.formatTrialLimitMessage();
+            } else {
+                message = formatter.formatLogisticCard(response, remaining);
+            }
+
+            sendMessageWithKeyboard(chatId, message);
+            notifyAdmin(chatId, response);
+
+        } catch (Exception e) {
+            log.error("Ошибка анализа для chatId {}: {}", chatId, e.getMessage(), e);
+            sendMessage(chatId, SAFE_ERROR_MSG);
+        }
+    }
+
+    private void handleMediaGroupAlbum(Long chatId, String mediaGroupId, Message message) {
+        Optional<String> bestFileId = extractBestPhotoFileId(message);
+        if (bestFileId.isEmpty()) return;
+
+        String fileId = bestFileId.get();
         List<String> existing = mediaGroupBuffer.putIfAbsent(mediaGroupId, new ArrayList<>());
         List<String> fileIds = existing != null ? existing : new ArrayList<>();
         fileIds.add(fileId);
@@ -180,98 +222,6 @@ public class CargoMetricsTelegramBot implements LongPollingSingleThreadUpdateCon
 
         } catch (Exception e) {
             log.error("Ошибка анализа медиаальбома для chatId {}: {}", chatId, e.getMessage(), e);
-            sendMessage(chatId, SAFE_ERROR_MSG);
-        }
-    }
-
-    private void handlePhotoMessage(Long chatId, List<PhotoSize> photos) {
-        if (photos == null || photos.isEmpty()) return;
-        processImages(chatId, photos);
-    }
-
-    private void handleDocumentImage(Long chatId, Document document) {
-        if (document == null || document.getFileId() == null) return;
-        log.info("Обработка изображения из Document: fileId={}", document.getFileId());
-        try {
-            InMemoryMultipartFile file = downloadImage(document.getFileId(), 0);
-            file = new InMemoryMultipartFile(
-                    file.getBytes(),
-                    "document_" + document.getFileUniqueId(),
-                    document.getFileName() != null ? document.getFileName() : "image.jpg",
-                    document.getMimeType()
-            );
-
-            if (!rateLimiter.canProcess(chatId)) {
-                sendMessage(chatId, formatter.formatTrialLimitMessage());
-                return;
-            }
-
-            RequestMetadata metadata = new RequestMetadata(
-                    "TELEGRAM",
-                    "TELEGRAM",
-                    String.valueOf(chatId)
-            );
-
-            int usedCount = rateLimiter.incrementAndGet(chatId);
-            int remaining = rateLimiter.getRemaining(chatId);
-
-            CargoAnalysisResponse response = cargoAnalysisService.analyzeCargoImages(List.of(file), metadata);
-            lastResponses.put(response.requestId().toString(), response);
-
-            String message;
-            if (remaining == 0) {
-                message = formatter.formatLogisticCard(response, remaining) + "\n\n" + formatter.formatTrialLimitMessage();
-            } else {
-                message = formatter.formatLogisticCard(response, remaining);
-            }
-
-            sendMessageWithKeyboard(chatId, message);
-            notifyAdmin(chatId, response);
-
-        } catch (Exception e) {
-            log.error("Ошибка обработки Document для chatId {}: {}", chatId, e.getMessage(), e);
-            sendMessage(chatId, SAFE_ERROR_MSG);
-        }
-    }
-
-    private void processImages(Long chatId, List<PhotoSize> photos) {
-        if (!rateLimiter.canProcess(chatId)) {
-            sendMessage(chatId, formatter.formatTrialLimitMessage());
-            return;
-        }
-
-        try {
-            List<org.springframework.web.multipart.MultipartFile> files = new ArrayList<>();
-            for (int i = 0; i < photos.size(); i++) {
-                PhotoSize photo = photos.get(i);
-                InMemoryMultipartFile file = downloadImage(photo.getFileId(), i);
-                files.add(file);
-            }
-
-            RequestMetadata metadata = new RequestMetadata(
-                    "TELEGRAM",
-                    "TELEGRAM",
-                    String.valueOf(chatId)
-            );
-
-            int usedCount = rateLimiter.incrementAndGet(chatId);
-            int remaining = rateLimiter.getRemaining(chatId);
-
-            CargoAnalysisResponse response = cargoAnalysisService.analyzeCargoImages(files, metadata);
-            lastResponses.put(response.requestId().toString(), response);
-
-            String message;
-            if (remaining == 0) {
-                message = formatter.formatLogisticCard(response, remaining) + "\n\n" + formatter.formatTrialLimitMessage();
-            } else {
-                message = formatter.formatLogisticCard(response, remaining);
-            }
-
-            sendMessageWithKeyboard(chatId, message);
-            notifyAdmin(chatId, response);
-
-        } catch (Exception e) {
-            log.error("Ошибка анализа для chatId {}: {}", chatId, e.getMessage(), e);
             sendMessage(chatId, SAFE_ERROR_MSG);
         }
     }
@@ -354,8 +304,7 @@ public class CargoMetricsTelegramBot implements LongPollingSingleThreadUpdateCon
         org.telegram.telegrambots.meta.api.objects.File telegramFile = telegramClient.execute(getFileRequest);
         String filePath = telegramFile.getFilePath();
 
-        String downloadUrl = "https://api.telegram.org/file/bot" + botToken + "/" + filePath;
-        log.info("Скачивание файла из Telegram: url={}", downloadUrl);
+        log.info("Скачивание файла из Telegram: path={}", filePath);
 
         try (InputStream is = URI.create(downloadUrl).toURL().openStream()) {
             byte[] bytes = is.readAllBytes();
