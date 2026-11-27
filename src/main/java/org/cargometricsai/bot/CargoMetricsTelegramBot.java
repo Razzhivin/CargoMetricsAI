@@ -27,10 +27,12 @@ import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import java.io.InputStream;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.AtomicBoolean;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -170,18 +172,28 @@ public class CargoMetricsTelegramBot implements LongPollingSingleThreadUpdateCon
         if (bestFileId.isEmpty()) return;
 
         String fileId = bestFileId.get();
-        List<String> existing = mediaGroupBuffer.putIfAbsent(mediaGroupId, new ArrayList<>());
-        List<String> fileIds = existing != null ? existing : new ArrayList<>();
-        fileIds.add(fileId);
+        AtomicBoolean isFirstFrame = new AtomicBoolean(false);
 
-        if (existing == null) {
+        mediaGroupBuffer.compute(mediaGroupId, (key, existingList) -> {
+            if (existingList == null) {
+                isFirstFrame.set(true);
+                List<String> newList = Collections.synchronizedList(new ArrayList<>());
+                newList.add(fileId);
+                return newList;
+            }
+            existingList.add(fileId);
+            return existingList;
+        });
+
+        if (isFirstFrame.get()) {
             scheduler.schedule(() -> {
                 List<String> collected = mediaGroupBuffer.remove(mediaGroupId);
                 if (collected != null && !collected.isEmpty()) {
+                    log.info("Альбом mediaGroupId={} собран: всего файлов для скачивания = {}", mediaGroupId, collected.size());
                     List<String> limited = collected.stream().limit(3).toList();
                     processFileIds(chatId, limited);
                 }
-            }, 1500, TimeUnit.MILLISECONDS);
+            }, 2500, TimeUnit.MILLISECONDS);
         }
     }
 
@@ -194,6 +206,7 @@ public class CargoMetricsTelegramBot implements LongPollingSingleThreadUpdateCon
         try {
             List<org.springframework.web.multipart.MultipartFile> files = new ArrayList<>();
             for (int i = 0; i < fileIds.size(); i++) {
+                log.info("Скачивание файла {}/{} из Telegram", i + 1, fileIds.size());
                 InMemoryMultipartFile file = downloadImage(fileIds.get(i), i);
                 files.add(file);
             }
