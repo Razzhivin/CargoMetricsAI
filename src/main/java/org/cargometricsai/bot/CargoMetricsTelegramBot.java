@@ -21,6 +21,7 @@ import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.api.objects.PhotoSize;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import java.io.InputStream;
@@ -276,7 +277,8 @@ public class CargoMetricsTelegramBot implements LongPollingSingleThreadUpdateCon
                 .callbackData("CONNECT_COMPANY")
                 .build();
 
-        var keyboard = InlineKeyboardMarkup.builder().keyboard(List.of(button)).build();
+        var row = new InlineKeyboardRow(button);
+        var keyboard = InlineKeyboardMarkup.builder().keyboard(List.of(row)).build();
         message.setReplyMarkup(keyboard);
 
         try {
