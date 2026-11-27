@@ -15,16 +15,12 @@ import org.telegram.telegrambots.client.okhttp.OkHttpTelegramClient;
 import org.telegram.telegrambots.longpolling.util.LongPollingSingleThreadUpdateConsumer;
 import org.telegram.telegrambots.meta.api.methods.GetFile;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
-import org.telegram.telegrambots.meta.api.methods.updates.CallbackQuery;
-
+import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.api.objects.PhotoSize;
-import org.telegram.telegrambots.meta.api.objects.inlinekeyboard.InlineKeyboardButton;
-import org.telegram.telegrambots.meta.api.objects.inlinekeyboard.InlineKeyboardMarkup;
-import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardMarkup;
-import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardRow;
-import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardButton;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
+import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import java.io.InputStream;
@@ -282,7 +278,7 @@ public class CargoMetricsTelegramBot implements LongPollingSingleThreadUpdateCon
                 .build();
         row.add(button);
 
-        var keyboard = new InlineKeyboardMarkup(List.of(row));
+        var keyboard = InlineKeyboardMarkup.builder().keyboard(row).build();
         message.setReplyMarkup(keyboard);
 
         try {
@@ -323,14 +319,14 @@ public class CargoMetricsTelegramBot implements LongPollingSingleThreadUpdateCon
         Long chatId = callbackQuery.getMessage().getChatId();
         String data = callbackQuery.getData();
         Long userId = callbackQuery.getFrom().getId();
-        String username = callbackQuery.getFrom().getUsername();
+        String username = callbackQuery.getFrom().getUserName();
 
         log.info("CallbackQuery от user={}, data={}", userId, data);
 
         try {
             // Ответ на callback (убирает «часики»)
-            org.telegram.telegrambots.meta.api.methods.updates.AnswerCallbackQuery answerCallback =
-                    org.telegram.telegrambots.meta.api.methods.updates.AnswerCallbackQuery.builder()
+            org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery answerCallback =
+                    org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery.builder()
                             .callbackQueryId(callbackQuery.getId())
                             .build();
             telegramClient.execute(answerCallback);
