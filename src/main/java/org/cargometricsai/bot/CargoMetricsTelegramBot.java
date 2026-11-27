@@ -303,6 +303,7 @@ public class CargoMetricsTelegramBot implements LongPollingSingleThreadUpdateCon
                 .build();
         org.telegram.telegrambots.meta.api.objects.File telegramFile = telegramClient.execute(getFileRequest);
         String filePath = telegramFile.getFilePath();
+        String downloadUrl = "https://api.telegram.org/file/bot" + botToken + "/" + filePath;
 
         log.info("Скачивание файла из Telegram: path={}", filePath);
 
