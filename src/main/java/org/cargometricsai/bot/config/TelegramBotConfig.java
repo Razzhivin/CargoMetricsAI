@@ -1,6 +1,8 @@
 package org.cargometricsai.bot.config;
 
 import org.cargometricsai.bot.CargoMetricsTelegramBot;
+import okhttp3.OkHttpClient;
+import org.cargometricsai.bot.service.TelegramNotificationFormatter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,6 +13,8 @@ import org.telegram.telegrambots.client.okhttp.OkHttpTelegramClient;
 import org.telegram.telegrambots.longpolling.TelegramBotsLongPollingApplication;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.time.Duration;
+
 @Configuration
 public class TelegramBotConfig {
 
@@ -18,7 +22,13 @@ public class TelegramBotConfig {
 
     @Bean
     public TelegramClient telegramClient(@Value("${telegram.bot.token}") String botToken) {
-        return new OkHttpTelegramClient(botToken);
+        OkHttpClient okHttpClient = new OkHttpClient.Builder()
+                .connectTimeout(Duration.ofSeconds(30))
+                .readTimeout(Duration.ofSeconds(30))
+                .writeTimeout(Duration.ofSeconds(30))
+                .retryOnConnectionFailure(true)
+                .build();
+        return new OkHttpTelegramClient(okHttpClient, botToken);
     }
 
     @Bean

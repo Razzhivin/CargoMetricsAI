@@ -79,6 +79,14 @@ public class TelegramNotificationFormatter {
         );
     }
 
+    public String formatConnectCompanyCard() {
+        return "🤝 <b>Подключение отдела логистики</b>\n\n" +
+                "Для настройки бота под ваш автопарк и запуска пилотного периода свяжитесь с руководителем проекта:\n\n" +
+                "👤 <b>Дмитрий Разживин</b>\n" +
+                "📞 Телефон / MAX: <code>+7 (904) 185-45-30</code>\n" +
+                "💬 Telegram: https://t.me";
+    }
+
     private String escapeHtml(String text) {
         if (text == null) return "";
         return text

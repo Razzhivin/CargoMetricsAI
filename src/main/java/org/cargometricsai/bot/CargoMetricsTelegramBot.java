@@ -15,10 +15,13 @@ import org.telegram.telegrambots.client.okhttp.OkHttpTelegramClient;
 import org.telegram.telegrambots.longpolling.util.LongPollingSingleThreadUpdateConsumer;
 import org.telegram.telegrambots.meta.api.methods.GetFile;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.methods.updates.CallbackQuery;
 
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.api.objects.PhotoSize;
+import org.telegram.telegrambots.meta.api.objects.inlinekeyboard.InlineKeyboardButton;
+import org.telegram.telegrambots.meta.api.objects.inlinekeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardRow;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardButton;
@@ -32,11 +35,12 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.AtomicBoolean;
+
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
 @ConditionalOnProperty(name = "telegram.bot.token")
@@ -84,6 +88,11 @@ public class CargoMetricsTelegramBot implements LongPollingSingleThreadUpdateCon
     @Override
     public void consume(Update update) {
         log.info("Входящий Update из Telegram: updateId={}", update.getUpdateId());
+
+        if (update.hasCallbackQuery()) {
+            handleCallbackQuery(update.getCallbackQuery());
+            return;
+        }
 
         if (update.hasMessage()) {
             Message message = update.getMessage();
@@ -266,14 +275,14 @@ public class CargoMetricsTelegramBot implements LongPollingSingleThreadUpdateCon
                 .parseMode("HTML")
                 .build();
 
-        var row = new KeyboardRow();
-        KeyboardButton button = KeyboardButton.builder()
+        var row = new ArrayList<InlineKeyboardButton>();
+        InlineKeyboardButton button = InlineKeyboardButton.builder()
                 .text("🚀 Подключить компанию")
-                .requestContact(false)
+                .callbackData("CONNECT_COMPANY")
                 .build();
         row.add(button);
 
-        var keyboard = new ReplyKeyboardMarkup(List.of(row));
+        var keyboard = new InlineKeyboardMarkup(List.of(row));
         message.setReplyMarkup(keyboard);
 
         try {
@@ -307,6 +316,56 @@ public class CargoMetricsTelegramBot implements LongPollingSingleThreadUpdateCon
             telegramClient.execute(adminMessage);
         } catch (TelegramApiException e) {
             log.error("Failed to notify admin: {}", e.getMessage());
+        }
+    }
+
+    private void handleCallbackQuery(CallbackQuery callbackQuery) {
+        Long chatId = callbackQuery.getMessage().getChatId();
+        String data = callbackQuery.getData();
+        Long userId = callbackQuery.getFrom().getId();
+        String username = callbackQuery.getFrom().getUsername();
+
+        log.info("CallbackQuery от user={}, data={}", userId, data);
+
+        try {
+            // Ответ на callback (убирает «часики»)
+            org.telegram.telegrambots.meta.api.methods.updates.AnswerCallbackQuery answerCallback =
+                    org.telegram.telegrambots.meta.api.methods.updates.AnswerCallbackQuery.builder()
+                            .callbackQueryId(callbackQuery.getId())
+                            .build();
+            telegramClient.execute(answerCallback);
+
+            if ("CONNECT_COMPANY".equals(data)) {
+                sendConnectCompanyCard(chatId);
+                notifyAdminConnectionRequest(username, userId);
+            }
+
+        } catch (TelegramApiException e) {
+            log.error("Ошибка обработки CallbackQuery от user {}: {}", userId, e.getMessage());
+        }
+    }
+
+    private void sendConnectCompanyCard(Long chatId) {
+        String message = formatter.formatConnectCompanyCard();
+        sendMessage(chatId, message);
+    }
+
+    private void notifyAdminConnectionRequest(String username, Long userId) {
+        try {
+            String message = String.format(
+                    "🔥 <b>ЗАЯВКА НА ПОДКЛЮЧЕНИЕ!</b>\n\n" +
+                            "👤 Пользователь: %s (ID: %d)",
+                    username != null ? "@" + username : "Unknown",
+                    userId
+            );
+            SendMessage adminMessage = SendMessage.builder()
+                    .chatId(String.valueOf(adminChatId))
+                    .text(message)
+                    .parseMode("HTML")
+                    .build();
+            telegramClient.execute(adminMessage);
+        } catch (TelegramApiException e) {
+            log.error("Failed to notify admin about connection request: {}", e.getMessage());
         }
     }
 
