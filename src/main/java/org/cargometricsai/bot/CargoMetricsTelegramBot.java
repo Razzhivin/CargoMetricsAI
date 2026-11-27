@@ -271,14 +271,12 @@ public class CargoMetricsTelegramBot implements LongPollingSingleThreadUpdateCon
                 .parseMode("HTML")
                 .build();
 
-        var row = new ArrayList<InlineKeyboardButton>();
         InlineKeyboardButton button = InlineKeyboardButton.builder()
                 .text("🚀 Подключить компанию")
                 .callbackData("CONNECT_COMPANY")
                 .build();
-        row.add(button);
 
-        var keyboard = InlineKeyboardMarkup.builder().keyboard(row).build();
+        var keyboard = InlineKeyboardMarkup.builder().keyboard(List.of(button)).build();
         message.setReplyMarkup(keyboard);
 
         try {
